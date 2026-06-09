@@ -1,13 +1,132 @@
+# ==========================================
+# Neutralinojs
+# ==========================================
+# Neutralinojs binaries and builds
+/bin/
+/dist/
+.tmp/
+
+# Neutralinojs client (downloaded/generated)
+neutralino.js
+resources/js/neutralino.js
+
+# Neutralinojs storage & log files
+.storage/
+*.log
+neutralinojs.log
+
+# ==========================================
+# Python
+# ==========================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nosexy
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Translations
+*.mo
+*.pot
+
+# Django/Flask/Scrapy/SageMath
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+instance/
+.webassets-cache
+.scrapy
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# PEP 582; project local packages directory
+__pypackages__/
+
+# Jupyter / IPython
+.ipynb_checkpoints
+profile_default/
+ipython_config.py
+
+# Type checkers / compilers
+.mypy_cache/
+.pyre/
+.pytype/
+cython_debug/
+
+# ==========================================
+# Operating System & IDEs
+# ==========================================
 # Developer tools' files
 .lite_workspace.lua
 
-# Neutralinojs binaries and builds
-/bin
-/dist
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
 
-# Neutralinojs client (minified)
-neutralino.js
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
 
-# Neutralinojs related files
-.storage
-*.log
+# IDEs / Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*~
