@@ -8,6 +8,7 @@
   "url": "/",
   "enableServer": true,
   "enableNativeAPI": true,
+  "enableExtensions": true,
   "tokenSecurity": "one-time",
   "logging": {
     "enabled": true,
@@ -16,7 +17,15 @@
   "nativeAllowList": [
     "app.*",
     "os.*",
-    "debug.log"
+    "debug.log",
+    "events.*",
+    "extensions.*"
+  ],
+  "extensions": [
+    {
+      "id": "js.neutralino.installer",
+      "command": "node ${NL_PATH}/extensions/installer_wrapper/extension.js"
+    }
   ],
   "globalVariables": {
     "TEST1": "Hello",

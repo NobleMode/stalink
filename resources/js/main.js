@@ -1,99 +1,148 @@
-// This is just a sample app. You can structure your Neutralinojs app code as you wish.
-// This example app is written with vanilla JavaScript and HTML.
-// Feel free to use any frontend framework you like :)
-// See more details: https://neutralino.js.org/docs/how-to/use-a-frontend-library
+function initApp() {
+    Neutralino.init();
 
-/*
-    Function to display information about the Neutralino app.
-    This function updates the content of the 'info' element in the HTML
-    with details regarding the running Neutralino application, including
-    its ID, port, operating system, and version information.
-*/
-function showInfo() {
-    document.getElementById('info').innerHTML = `
-        ${NL_APPID} is running on port ${NL_PORT} inside ${NL_OS}
-        <br/><br/>
-        <span>server: v${NL_VERSION} . client: v${NL_CVERSION}</span>
-        `;
-}
+    Neutralino.events.on('windowClose', () => {
+        Neutralino.app.exit();
+    });
 
-/*
-    Function to open the official Neutralino documentation in the default web browser.
-*/
-function openDocs() {
-    Neutralino.os.open("https://neutralino.js.org/docs");
-}
+    const splashScreen = document.getElementById('splash-screen');
+    const mainDashboard = document.getElementById('main-dashboard');
+    const statusTitle = document.getElementById('installer-status-title');
+    const statusDesc = document.getElementById('installer-status-desc');
+    const logsContainer = document.getElementById('installer-logs');
+    const spinner = document.getElementById('loading-spinner');
+    const retryBtn = document.getElementById('retry-btn');
+    const forceRetryBtn = document.getElementById('force-retry-btn');
 
-/*
-    Function to open a tutorial video on Neutralino's official YouTube channel in the default web browser.
-*/
-function openTutorial() {
-    Neutralino.os.open("https://www.youtube.com/c/CodeZri");
-}
-
-/*
-    Function to set up a system tray menu with options specific to the window mode.
-    This function checks if the application is running in window mode, and if so,
-    it defines the tray menu items and sets up the tray accordingly.
-*/
-function setTray() {
-    // Tray menu is only available in window mode
-    if(NL_MODE != "window") {
-        console.log("INFO: Tray menu is only available in the window mode.");
-        return;
+    function appendLog(msg, type = 'info') {
+        const div = document.createElement('div');
+        div.className = type === 'error' ? 'text-red-400' : 
+                        type === 'success' ? 'text-emerald-400' : 'text-slate-500';
+        div.innerText = `> ${msg}`;
+        logsContainer.appendChild(div);
+        logsContainer.scrollTop = logsContainer.scrollHeight;
     }
 
-    // Define tray menu items
-    let tray = {
-        icon: "/resources/icons/trayIcon.png",
-        menuItems: [
-            {id: "VERSION", text: "Get version"},
-            {id: "SEP", text: "-"},
-            {id: "QUIT", text: "Quit"}
-        ]
-    };
+    Neutralino.events.on('INSTALLER_STATUS', (evt) => {
+        const data = evt.detail;
+        
+        appendLog(`[${data.status}] ${data.payload}`);
 
-    // Set the tray menu
-    Neutralino.os.setTray(tray);
-}
+        if (data.status === 'ERROR') {
+            statusTitle.innerText = "Installation Error";
+            statusTitle.className = "text-lg font-semibold text-red-400 mb-2";
+            statusDesc.innerText = data.payload;
+            spinner.style.borderColor = "rgba(239, 68, 68, 0.2)";
+            spinner.style.borderTopColor = "#ef4444";
+            spinner.style.display = 'none'; // Hide spinner on error
+            retryBtn.classList.remove('hidden'); // Show retry button
+            appendLog(data.payload, 'error');
+        } 
+        else if (data.status === 'MISSING') {
+            statusTitle.innerText = "Dependencies Missing";
+            statusTitle.className = "text-lg font-semibold text-slate-100 mb-2";
+            statusDesc.innerText = data.payload;
+            spinner.style.display = 'block';
+            retryBtn.classList.add('hidden');
+        }
+        else if (data.status === 'INSTALLING') {
+            statusTitle.innerText = "Installing Systems...";
+            statusTitle.className = "text-lg font-semibold text-slate-100 mb-2";
+            statusDesc.innerText = data.payload;
+            spinner.style.display = 'block';
+            retryBtn.classList.add('hidden');
+        }
+        else if (data.status === 'COMPLETE') {
+            statusTitle.innerText = "Systems Ready";
+            statusTitle.className = "text-lg font-semibold text-emerald-400 mb-2";
+            statusDesc.innerText = data.payload;
+            spinner.style.borderColor = "rgba(16, 185, 129, 0.2)";
+            spinner.style.borderTopColor = "#10b981";
+            spinner.style.display = 'block';
+            retryBtn.classList.add('hidden');
+            appendLog(data.payload, 'success');
 
-/*
-    Function to handle click events on the tray menu items.
-    This function performs different actions based on the clicked item's ID,
-    such as displaying version information or exiting the application.
-*/
-function onTrayMenuItemClicked(event) {
-    switch(event.detail.id) {
-        case "VERSION":
-            // Display version information
-            Neutralino.os.showMessageBox("Version information",
-                `Neutralinojs server: v${NL_VERSION} | Neutralinojs client: v${NL_CVERSION}`);
-            break;
-        case "QUIT":
-            // Exit the application
-            Neutralino.app.exit();
-            break;
+            // Wait 1.5 seconds for users to see success state, then fade to main dashboard
+            setTimeout(() => {
+                splashScreen.classList.add('animate-fade-out');
+                
+                setTimeout(() => {
+                    splashScreen.style.display = 'none';
+                    mainDashboard.classList.remove('hidden');
+                    mainDashboard.classList.add('animate-fade-in');
+                }, 800); // Wait for fadeOut animation
+            }, 1500);
+        }
+    });
+
+    retryBtn.addEventListener('click', () => {
+        appendLog("Retrying installer...");
+        statusTitle.innerText = "Connecting...";
+        statusTitle.className = "text-lg font-semibold text-slate-100 mb-2";
+        statusDesc.innerText = "Re-initializing requirement checks...";
+        spinner.style.display = 'block';
+        spinner.style.borderColor = "rgba(255, 255, 255, 0.1)";
+        spinner.style.borderTopColor = "#3b82f6";
+        retryBtn.classList.add('hidden');
+        
+        if (typeof Neutralino !== 'undefined' && Neutralino.extensions) {
+            Neutralino.extensions.dispatch('js.neutralino.installer', 'appReady')
+                .then(() => {
+                    appendLog("appReady successfully dispatched for retry.");
+                })
+                .catch((err) => {
+                    appendLog(`Failed to dispatch retry: ${JSON.stringify(err)}`, 'error');
+                });
+        }
+    });
+
+    forceRetryBtn.addEventListener('click', () => {
+        appendLog("Initiating user-requested force reinstall...");
+        
+        // Show splash screen, hide dashboard
+        splashScreen.style.display = 'flex';
+        splashScreen.classList.remove('animate-fade-out');
+        splashScreen.style.opacity = '1';
+        mainDashboard.classList.add('hidden');
+        mainDashboard.classList.remove('animate-fade-in');
+        
+        // Reset splash screen UI state
+        statusTitle.innerText = "Resetting Binaries...";
+        statusTitle.className = "text-lg font-semibold text-slate-100 mb-2";
+        statusDesc.innerText = "Wiping local binary installations...";
+        spinner.style.display = 'block';
+        spinner.style.borderColor = "rgba(255, 255, 255, 0.1)";
+        spinner.style.borderTopColor = "#3b82f6";
+        retryBtn.classList.add('hidden');
+        
+        // Reset terminal logs
+        logsContainer.innerHTML = '<div class="text-blue-500">> Resetting local bin environment...</div>';
+        
+        // Dispatch forceRetry event
+        if (typeof Neutralino !== 'undefined' && Neutralino.extensions) {
+            Neutralino.extensions.dispatch('js.neutralino.installer', 'forceRetry')
+                .then(() => {
+                    appendLog("forceRetry event successfully dispatched.");
+                })
+                .catch((err) => {
+                    appendLog(`Failed to dispatch forceRetry: ${JSON.stringify(err)}`, 'error');
+                });
+        }
+    });
+
+    // Send a message that UI is ready and dispatch appReady to the extension
+    appendLog("UI Initialized. Dispatching appReady event to installer...");
+    if (typeof Neutralino !== 'undefined' && Neutralino.extensions) {
+        Neutralino.extensions.dispatch('js.neutralino.installer', 'appReady')
+            .then(() => {
+                appendLog("appReady event acknowledged.");
+            })
+            .catch((err) => {
+                appendLog(`Failed to dispatch appReady: ${JSON.stringify(err)}`, 'error');
+            });
+    } else {
+        appendLog("Neutralino extensions API not available.", 'error');
     }
 }
 
-/*
-    Function to handle the window close event by gracefully exiting the Neutralino application.
-*/
-function onWindowClose() {
-    Neutralino.app.exit();
-}
-
-// Initialize Neutralino
-Neutralino.init();
-
-// Register event listeners
-Neutralino.events.on("trayMenuItemClicked", onTrayMenuItemClicked);
-Neutralino.events.on("windowClose", onWindowClose);
-
-// Conditional initialization: Set up system tray if not running on macOS
-if(NL_OS != "Darwin") { // TODO: Fix https://github.com/neutralinojs/neutralinojs/issues/615
-    setTray();
-}
-
-// Display app information
-showInfo();
+window.addEventListener('DOMContentLoaded', initApp);
