@@ -12,13 +12,18 @@ import re
 # Script path: extensions/utils/requirement_check.py
 # Target path: extensions/backend/bin
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BIN_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "backend", "bin"))
+BIN_BASE_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "backend", "bin"))
 
-# Verified fallback static asset endpoints from GitHub releases
-FALLBACK_URLS = {
+# Determine platform-specific bin directory
+platform = sys.platform
+platform_dir = "windows" if platform == "win32" else "linux"
+BIN_DIR = os.path.join(BIN_BASE_DIR, platform_dir)
+
+# Hosting pool URLs mapping to exact .zip and .tar.gz targets for Deskflow and Mutagen
+HOSTING_POOL_URLS = {
     "win32": {
         "mutagen": "https://github.com/mutagen-io/mutagen/releases/download/v0.18.1/mutagen_windows_amd64_v0.18.1.zip",
-        "deskflow": "https://github.com/deskflow/deskflow/releases/download/v1.26.0/deskflow-1.26.0-win-x64-portable.7z"
+        "deskflow": "https://github.com/deskflow/deskflow/releases/download/v1.26.0/deskflow-1.26.0-win-x64-portable.zip"
     },
     "linux": {
         "mutagen": "https://github.com/mutagen-io/mutagen/releases/download/v0.18.1/mutagen_linux_amd64_v0.18.1.tar.gz",
@@ -163,8 +168,12 @@ def download_and_extract(url, target_binaries):
     Downloads an archive from a URL and extracts the target binaries from it.
     """
     filename = url.split("/")[-1]
-    archive_path = os.path.join(BIN_DIR, filename)
-    temp_extract_dir = os.path.join(BIN_DIR, "temp_extract")
+    
+    # Use a separate temp_download folder to avoid polluting the platform bin directory
+    temp_dir = os.path.join(BIN_BASE_DIR, "temp_download")
+    archive_path = os.path.join(temp_dir, filename)
+    temp_extract_dir = os.path.join(temp_dir, "temp_extract")
+    
     os.makedirs(temp_extract_dir, exist_ok=True)
     
     try:
@@ -183,6 +192,10 @@ def download_and_extract(url, target_binaries):
         else:
             raise ValueError(f"Unsupported archive format: {filename}")
             
+        # Clean up the downloaded archive file immediately after extraction to save disk space
+        if os.path.exists(archive_path):
+            os.remove(archive_path)
+            
         all_found = True
         for binary in target_binaries:
             found = find_and_move_binary(temp_extract_dir, binary, BIN_DIR)
@@ -193,10 +206,9 @@ def download_and_extract(url, target_binaries):
             raise FileNotFoundError(f"Could not find all required binaries {target_binaries} in the downloaded archive.")
             
     finally:
-        if os.path.exists(archive_path):
-            os.remove(archive_path)
-        if os.path.exists(temp_extract_dir):
-            shutil.rmtree(temp_extract_dir)
+        # Clean up the entire temp_download directory
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
 
 def ensure_binaries_exist():
     # Make sure the bin folder exists
@@ -204,6 +216,8 @@ def ensure_binaries_exist():
     
     platform = sys.platform
     if platform not in ["win32", "linux"]:
+        print(json.dumps({"event": "INSTALLER_STATUS", "status": "ERROR", "payload": f"Unsupported platform: {platform}"}))
+        sys.stdout.flush()
         return False
         
     ext = ".exe" if platform == "win32" else ""
@@ -213,64 +227,48 @@ def ensure_binaries_exist():
     mutagen_path = os.path.join(BIN_DIR, mutagen_name)
     deskflow_path = os.path.join(BIN_DIR, deskflow_name)
 
-    # Check if files exist and get their current versions
+    # File validation checkpoint (scan local bin/ directory on app startup)
     mutagen_exists = os.path.exists(mutagen_path)
     deskflow_exists = os.path.exists(deskflow_path)
     
-    local_mutagen_version = get_local_binary_version(mutagen_path, ["version"]) if mutagen_exists else None
-    local_deskflow_version = get_local_binary_version(deskflow_path, ["--version"]) if deskflow_exists else None
-
-    # Check if we need to update or download
-    need_mutagen = not mutagen_exists or not (local_mutagen_version and check_latest_version("mutagen-io/mutagen", local_mutagen_version))
-    need_deskflow = not deskflow_exists or not (local_deskflow_version and check_latest_version("deskflow/deskflow", local_deskflow_version))
-
-    if not need_mutagen and not need_deskflow:
+    # If all files exist, dispatch COMPLETE status and exit
+    if mutagen_exists and deskflow_exists:
+        print(json.dumps({"event": "INSTALLER_STATUS", "status": "COMPLETE", "payload": "All core binaries verified."}))
+        sys.stdout.flush()
         return True
 
-    print(json.dumps({"event": "INSTALLER_STATUS", "payload": "Updating/Downloading core binaries... Please wait."}))
+    # If files are missing, dispatch MISSING payload immediately
+    print(json.dumps({"event": "INSTALLER_STATUS", "status": "MISSING", "payload": "Required binaries are missing. Preparing installation..."}))
     sys.stdout.flush()
 
     try:
-        # 1. Handle Mutagen Download
-        if need_mutagen:
-            if platform == "win32":
-                mutagen_patterns = ["windows", "amd64", ".zip"]
-            else:
-                mutagen_patterns = ["linux", "amd64", ".tar.gz"]
-            
-            mutagen_url = get_latest_release_url(
-                "mutagen-io/mutagen", 
-                mutagen_patterns, 
-                FALLBACK_URLS[platform]["mutagen"]
-            )
+        # 1. Download and extract Mutagen if missing
+        if not mutagen_exists:
+            print(json.dumps({"event": "INSTALLER_STATUS", "status": "INSTALLING", "payload": "Downloading Mutagen..."}))
+            sys.stdout.flush()
+            mutagen_url = HOSTING_POOL_URLS[platform]["mutagen"]
             download_and_extract(mutagen_url, [mutagen_name])
 
-        # 2. Handle Deskflow Download
-        if need_deskflow:
-            if platform == "win32":
-                deskflow_patterns = ["win", "x64", "portable", ".7z"]
-            else:
-                deskflow_patterns = ["ubuntu", "x86_64", ".deb"]
-            
-            deskflow_url = get_latest_release_url(
-                "deskflow/deskflow", 
-                deskflow_patterns, 
-                FALLBACK_URLS[platform]["deskflow"]
-            )
+        # 2. Download and extract Deskflow if missing
+        if not deskflow_exists:
+            print(json.dumps({"event": "INSTALLER_STATUS", "status": "INSTALLING", "payload": "Downloading Deskflow..."}))
+            sys.stdout.flush()
+            deskflow_url = HOSTING_POOL_URLS[platform]["deskflow"]
             download_and_extract(deskflow_url, [deskflow_name])
 
         # Linux Specific Security Requirement: Apply executable flags to binaries
         if platform == "linux":
-            if need_mutagen:
-                os.chmod(os.path.join(BIN_DIR, "mutagen"), 0o755)
-            if need_deskflow:
-                os.chmod(os.path.join(BIN_DIR, "deskflow-core"), 0o755)
+            os.chmod(os.path.join(BIN_DIR, "mutagen"), 0o755)
+            os.chmod(os.path.join(BIN_DIR, "deskflow-core"), 0o755)
 
-        print(json.dumps({"event": "INSTALLER_STATUS", "payload": "Setup complete! Rigs ready to link."}))
+        print(json.dumps({"event": "INSTALLER_STATUS", "status": "COMPLETE", "payload": "Setup complete! Rigs ready to link."}))
         sys.stdout.flush()
         return True
 
     except Exception as e:
-        print(json.dumps({"event": "INSTALLER_STATUS", "payload": f"Download failed: {str(e)}"}))
+        print(json.dumps({"event": "INSTALLER_STATUS", "status": "ERROR", "payload": f"Download failed: {str(e)}"}))
         sys.stdout.flush()
         return False
+
+if __name__ == "__main__":
+    ensure_binaries_exist()

@@ -1,11 +1,15 @@
-# stalink
+# neutralinojs-minimal
 
-A desktop application built using Neutralinojs and Python.
+The default template for a Neutralinojs app. It's possible to use your favorite frontend framework by using [these steps](https://neutralino.js.org/docs/getting-started/using-frontend-libraries).
 
-Developed by **noblemode**.
+## Contributors
 
-## Development Setup
+[![Contributors](https://contrib.rocks/image?repo=neutralinojs/neutralinojs-minimal)](https://github.com/neutralinojs/neutralinojs-minimal/graphs/contributors)
 
-1. **Neutralinojs**: Make sure you have the Neutralinojs CLI installed (`npm install -g @neutralinojs/neu`).
-2. **Run App**: Run `neu run` to start the desktop window.
-3. **Build**: Run `neu build` to package the app binaries for Windows, Linux, and macOS.
+## License
+
+[MIT](LICENSE)
+
+## Icon credits
+
+- `trayIcon.png` - Made by [Freepik](https://www.freepik.com) and downloaded from [Flaticon](https://www.flaticon.com)
