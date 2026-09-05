@@ -185,13 +185,27 @@ def extract_all_to_bin(archive_path, dest_dir):
     filename = os.path.basename(archive_path)
     if filename.endswith(".zip"):
         with zipfile.ZipFile(archive_path, 'r') as zip_ref:
-            zip_ref.extractall(temp_extract_dir)
+            members = zip_ref.infolist()
+            for idx, member in enumerate(members):
+                zip_ref.extract(member, temp_extract_dir)
+                if idx % 20 == 0 or idx == len(members) - 1:
+                    print(json.dumps({"event": "INSTALLER_PROGRESS", "log": f"Extracting {member.filename}..."}))
+                    sys.stdout.flush()
     elif filename.endswith(".tar.gz") or filename.endswith(".tgz"):
         with tarfile.open(archive_path, "r:gz") as tar_ref:
-            tar_ref.extractall(temp_extract_dir)
+            members = tar_ref.getmembers()
+            for idx, member in enumerate(members):
+                tar_ref.extract(member, temp_extract_dir)
+                if idx % 20 == 0 or idx == len(members) - 1:
+                    print(json.dumps({"event": "INSTALLER_PROGRESS", "log": f"Extracting {member.name}..."}))
+                    sys.stdout.flush()
     elif filename.endswith(".deb"):
+        print(json.dumps({"event": "INSTALLER_PROGRESS", "log": f"Extracting DEB package {filename}..."}))
+        sys.stdout.flush()
         extract_deb(archive_path, temp_extract_dir)
     elif filename.endswith(".7z"):
+        print(json.dumps({"event": "INSTALLER_PROGRESS", "log": f"Extracting 7Z archive {filename}..."}))
+        sys.stdout.flush()
         extract_7z(archive_path, temp_extract_dir)
     else:
         raise ValueError(f"Unsupported archive format: {filename}")
@@ -217,8 +231,38 @@ def download_and_extract(url, dest_dir):
     os.makedirs(temp_dir, exist_ok=True)
     
     try:
-        urllib.request.urlretrieve(url, archive_path)
+        progress_state = {"last": -1, "last_mb": -1}
+        def reporthook(block_num, block_size, total_size):
+            if total_size > 0:
+                percent = min(100, int(block_num * block_size * 100 / total_size))
+                if percent > progress_state["last"] and percent % 5 == 0:
+                    print(json.dumps({"event": "INSTALLER_PROGRESS", "percent": percent, "log": f"Downloading {filename}: {percent}% ({block_num * block_size} / {total_size} bytes)"}))
+                    sys.stdout.flush()
+                    progress_state["last"] = percent
+            else:
+                downloaded = block_num * block_size
+                mb = downloaded // (1024 * 1024)
+                if mb > progress_state["last_mb"]:
+                    print(json.dumps({"event": "INSTALLER_PROGRESS", "percent": 50, "log": f"Downloading {filename}: {downloaded} bytes (size unknown)..."}))
+                    sys.stdout.flush()
+                    progress_state["last_mb"] = mb
+
+        print(json.dumps({"event": "INSTALLER_PROGRESS", "percent": 0, "log": f"Initiating connection to {url}..."}))
+        sys.stdout.flush()
+
+        # Check if we should simulate a network failure on startup/installation
+        if os.environ.get("RETRY", "FALSE").upper() == "TRUE":
+            raise RuntimeError("Simulated network connection lost (RETRY=TRUE env active).")
+
+        urllib.request.urlretrieve(url, archive_path, reporthook)
+        
+        print(json.dumps({"event": "INSTALLER_PROGRESS", "percent": 100, "log": f"Extracting archive {filename} into {dest_dir}..."}))
+        sys.stdout.flush()
+        
         extract_all_to_bin(archive_path, dest_dir)
+        
+        print(json.dumps({"event": "INSTALLER_PROGRESS", "percent": 100, "log": f"Extraction complete for {filename}."}))
+        sys.stdout.flush()
     finally:
         # Clean up the entire temp_download directory
         if os.path.exists(temp_dir):
@@ -284,12 +328,6 @@ def ensure_binaries_exist():
     sys.stdout.flush()
 
     try:
-        # Check if we should simulate a network failure on startup/installation
-        if os.environ.get("RETRY", "FALSE").upper() == "TRUE":
-            print(json.dumps({"event": "INSTALLER_STATUS", "status": "INSTALLING", "payload": "Downloading Mutagen..."}))
-            sys.stdout.flush()
-            raise RuntimeError("Simulated network connection lost (RETRY=TRUE env active).")
-
         machine_arch = platform.machine().lower()
         is_arm = "arm" in machine_arch or "aarch" in machine_arch
         

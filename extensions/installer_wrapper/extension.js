@@ -23,6 +23,75 @@ for (let i = 0; i < process.argv.length; i++) {
 
 let started = false;
 let processSpawned = false;
+let instanceProcess = null;
+let instancePort = null;
+
+// Spawns the background Python discovery instance and forwards its port/events
+function startBackgroundInstance(ws) {
+    if (instanceProcess) return;
+    
+    const pyInstancePath = path.join(__dirname, '..', 'backend', 'python_utils', 'instance.py');
+    console.log(`Spawning Python Instance process: python3 ${pyInstancePath}`);
+    instanceProcess = spawn('python3', [pyInstancePath]);
+    
+    instanceProcess.stdout.on('data', (data) => {
+        const output = data.toString().trim();
+        const lines = output.split('\n');
+        
+        lines.forEach(line => {
+            try {
+                const parsed = JSON.parse(line.trim());
+                if (parsed.event === 'INSTANCE_STARTED') {
+                    instancePort = parsed.port;
+                    console.log(`Background Instance started on port ${instancePort}`);
+                }
+                
+                // Broadcast all instance events to Neutralino app
+                if (parsed.event) {
+                    ws.send(JSON.stringify({
+                        id: Date.now().toString(),
+                        method: 'app.broadcast',
+                        accessToken: nlToken,
+                        data: {
+                            event: parsed.event,
+                            data: parsed
+                        }
+                    }));
+                }
+            } catch (e) {
+                console.log(`[Python Instance Log] ${line}`);
+            }
+        });
+    });
+    
+    instanceProcess.stderr.on('data', (data) => {
+        console.error(`[Python Instance Error] ${data.toString()}`);
+    });
+    
+    instanceProcess.on('close', (code) => {
+        console.log(`Python Instance exited with code ${code}`);
+        instanceProcess = null;
+    });
+}
+
+function cleanup() {
+    console.log("Cleaning up child processes...");
+    if (instanceProcess) {
+        instanceProcess.kill();
+        instanceProcess = null;
+    }
+}
+
+// Ensure cleanup runs on exit/termination signal
+process.on('exit', cleanup);
+process.on('SIGINT', () => {
+    cleanup();
+    process.exit(0);
+});
+process.on('SIGTERM', () => {
+    cleanup();
+    process.exit(0);
+});
 
 // Spawns Python process and forwards stdout logs as app.broadcast events
 function startExtensionProcess(ws) {
@@ -99,6 +168,9 @@ function connectAndStart() {
                 data: 'installer_wrapper'
             }
         }));
+
+        // Start the background discovery instance immediately
+        startBackgroundInstance(ws);
     });
 
     ws.on('message', (message) => {
@@ -110,6 +182,23 @@ function connectAndStart() {
                 if (!processSpawned) {
                     processSpawned = true;
                     startExtensionProcess(ws);
+                }
+                
+                // Re-broadcast instance port if background service is already running
+                if (instancePort) {
+                    console.log(`Re-broadcasting INSTANCE_STARTED port: ${instancePort}`);
+                    ws.send(JSON.stringify({
+                        id: Date.now().toString(),
+                        method: 'app.broadcast',
+                        accessToken: nlToken,
+                        data: {
+                            event: 'INSTANCE_STARTED',
+                            data: {
+                                event: 'INSTANCE_STARTED',
+                                port: instancePort
+                            }
+                        }
+                    }));
                 }
             } else if (parsed.event === 'forceRetry') {
                 console.log('Received forceRetry event from frontend. Resetting and initiating Python process.');
@@ -135,6 +224,41 @@ function connectAndStart() {
                     processSpawned = true;
                     startExtensionProcess(ws);
                 }
+
+                // Re-broadcast instance port if background service is already running
+                if (instancePort) {
+                    console.log(`Re-broadcasting INSTANCE_STARTED port: ${instancePort}`);
+                    ws.send(JSON.stringify({
+                        id: Date.now().toString(),
+                        method: 'app.broadcast',
+                        accessToken: nlToken,
+                        data: {
+                            event: 'INSTANCE_STARTED',
+                            data: {
+                                event: 'INSTANCE_STARTED',
+                                port: instancePort
+                            }
+                        }
+                    }));
+                }
+            } else if (parsed.event === 'cancelInstall') {
+                console.log('Received cancelInstall event from frontend. Cleaning up binaries and exiting.');
+                const platformDir = process.platform === 'win32' ? 'windows' : 'linux';
+                const mutagenDir = path.join(__dirname, '..', 'backend', 'bin', platformDir, 'mutagen');
+                const deskflowDir = path.join(__dirname, '..', 'backend', 'bin', platformDir, 'deskflow');
+
+                try {
+                    if (fs.existsSync(mutagenDir)) fs.rmSync(mutagenDir, { recursive: true, force: true });
+                    if (fs.existsSync(deskflowDir)) fs.rmSync(deskflowDir, { recursive: true, force: true });
+                } catch (err) {
+                    console.error('Failed to clean binary directories on cancel:', err);
+                }
+            }
+            
+            // If the message contains a command for KVM or sync automation, pipe it to instance.py stdin
+            if (parsed.command && instanceProcess) {
+                console.log(`Forwarding command ${parsed.command} to Python Instance stdin.`);
+                instanceProcess.stdin.write(JSON.stringify(parsed) + '\n');
             }
         } catch (e) {
             console.error('Failed to parse WebSocket message:', e);

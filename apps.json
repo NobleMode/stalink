@@ -1,0 +1,17 @@
+{
+  "unity": {
+    "name": "Unity Editor",
+    "win32": "C:\\Program Files\\Unity\\Hub\\Editor\\2022.3.x\\Editor\\Unity.exe",
+    "linux": "/usr/bin/unity-editor"
+  },
+  "blender": {
+    "name": "Blender 3D",
+    "win32": "C:\\Program Files\\Blender Foundation\\Blender 4.0\\blender.exe",
+    "linux": "/usr/bin/blender"
+  },
+  "godot": {
+    "name": "Godot Engine",
+    "win32": "C:\\Tools\\Godot\\Godot_v4.exe",
+    "linux": "/usr/local/bin/godot"
+  }
+}

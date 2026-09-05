@@ -1,0 +1,91 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom animations and sci-fi aesthetic elements */
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; pointer-events: none; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-fade-out {
+  animation: fadeOut 0.4s ease forwards;
+}
+.animate-fade-in {
+  animation: fadeIn 0.4s ease forwards;
+}
+
+.box-panel {
+  position: relative;
+  background: #0f172a;
+  border: 1px solid #334155;
+}
+
+/* Sci-fi corner cut triangle accent */
+.box-panel::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 0 12px 12px;
+  border-color: transparent transparent #3b82f6 transparent;
+  z-index: 10;
+}
+
+.btn-triangle {
+  position: relative;
+}
+.btn-triangle::after {
+  content: '';
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 8px 8px 0;
+  border-color: transparent #60a5fa transparent transparent;
+}
+
+/* Terminal scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #020617;
+  border-left: 1px solid #1e293b;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border: 1px solid #020617;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+.spinner {
+  border: 2px solid #1e293b;
+  border-top: 2px solid #3b82f6;
+  width: 24px;
+  height: 24px;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes indeterminate {
+  0% { left: -40%; }
+  100% { left: 100%; }
+}
+.animate-indeterminate {
+  animation: indeterminate 1.5s infinite ease-in-out;
+}
