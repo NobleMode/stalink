@@ -22,243 +22,199 @@ for (let i = 0; i < process.argv.length; i++) {
 }
 
 let started = false;
-let processSpawned = false;
-let instanceProcess = null;
-let instancePort = null;
+let backendProcess = null;
+let lastInstancePort = null;
+let lastEnvData = null;
+let lastBinaryStatus = null;
+let lastInstallerStatus = null;
 
-// Spawns the background Python discovery instance and forwards its port/events
-function startBackgroundInstance(ws) {
-    if (instanceProcess) return;
-    
-    const pyInstancePath = path.join(__dirname, '..', 'backend', 'python_utils', 'instance.py');
-    console.log(`Spawning Python Instance process: python3 ${pyInstancePath}`);
-    instanceProcess = spawn('python3', [pyInstancePath]);
-    
-    instanceProcess.stdout.on('data', (data) => {
-        const output = data.toString().trim();
-        const lines = output.split('\n');
-        
+function broadcastToApp(ws, event, data) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            id: Date.now().toString(),
+            method: 'app.broadcast',
+            accessToken: nlToken,
+            data: {
+                event: event,
+                data: data
+            }
+        }));
+    }
+}
+
+function startBackendProcess(ws) {
+    if (backendProcess) return;
+
+    const mainPyPath = path.join(__dirname, '..', 'backend', 'main.py');
+    console.log(`Spawning StaLink Python Engine: python3 ${mainPyPath}`);
+    backendProcess = spawn('python3', [mainPyPath]);
+
+    let stdoutBuffer = '';
+    backendProcess.stdout.on('data', (data) => {
+        stdoutBuffer += data.toString();
+        const lines = stdoutBuffer.split('\n');
+        stdoutBuffer = lines.pop();
+
         lines.forEach(line => {
+            const trimmed = line.trim();
+            if (!trimmed) return;
             try {
-                const parsed = JSON.parse(line.trim());
+                const parsed = JSON.parse(trimmed);
                 if (parsed.event === 'INSTANCE_STARTED') {
-                    instancePort = parsed.port;
-                    console.log(`Background Instance started on port ${instancePort}`);
+                    lastInstancePort = parsed.port;
+                } else if (parsed.event === 'ENV_INFO') {
+                    lastEnvData = parsed;
+                } else if (parsed.event === 'BINARY_STATUS') {
+                    lastBinaryStatus = parsed;
+                } else if (parsed.event === 'INSTALLER_STATUS') {
+                    lastInstallerStatus = parsed;
                 }
-                
-                // Broadcast all instance events to Neutralino app
+
+                // Broadcast parsed JSON event to Neutralino frontend
                 if (parsed.event) {
-                    ws.send(JSON.stringify({
-                        id: Date.now().toString(),
-                        method: 'app.broadcast',
-                        accessToken: nlToken,
-                        data: {
-                            event: parsed.event,
-                            data: parsed
-                        }
-                    }));
+                    broadcastToApp(ws, parsed.event, parsed);
                 }
             } catch (e) {
-                console.log(`[Python Instance Log] ${line}`);
+                console.log(`[StaLink Engine Log] ${trimmed}`);
             }
         });
     });
-    
-    instanceProcess.stderr.on('data', (data) => {
-        console.error(`[Python Instance Error] ${data.toString()}`);
+
+    backendProcess.stderr.on('data', (data) => {
+        console.error(`[StaLink Engine Error] ${data.toString()}`);
     });
-    
-    instanceProcess.on('close', (code) => {
-        console.log(`Python Instance exited with code ${code}`);
-        instanceProcess = null;
+
+    backendProcess.on('close', (code) => {
+        console.log(`StaLink Engine exited with code ${code}`);
+        backendProcess = null;
     });
 }
 
 function cleanup() {
-    console.log("Cleaning up child processes...");
-    if (instanceProcess) {
-        instanceProcess.kill();
-        instanceProcess = null;
+    console.log("Cleaning up StaLink Engine process...");
+    if (backendProcess) {
+        try {
+            backendProcess.stdin.write(JSON.stringify({ command: 'STOP_ALL' }) + '\n');
+            backendProcess.kill();
+        } catch (e) {
+            // ignore
+        }
+        backendProcess = null;
     }
 }
 
-// Ensure cleanup runs on exit/termination signal
 process.on('exit', cleanup);
-process.on('SIGINT', () => {
-    cleanup();
-    process.exit(0);
-});
-process.on('SIGTERM', () => {
-    cleanup();
-    process.exit(0);
-});
-
-// Spawns Python process and forwards stdout logs as app.broadcast events
-function startExtensionProcess(ws) {
-    // Spawn the Python extraction script
-    const pyScriptPath = path.join(__dirname, '..', 'utils', 'requirement_check.py');
-    console.log(`Spawning Python process: python3 ${pyScriptPath}`);
-    const pyProcess = spawn('python3', [pyScriptPath]);
-
-    pyProcess.stdout.on('data', (data) => {
-        const output = data.toString().trim();
-        const lines = output.split('\n');
-        
-        lines.forEach(line => {
-            try {
-                // Check if python printed a JSON payload
-                const parsed = JSON.parse(line.trim());
-                if (parsed.event) {
-                    // Send it exactly as broadcast to frontend
-                    ws.send(JSON.stringify({
-                        id: Date.now().toString(),
-                        method: 'app.broadcast',
-                        accessToken: nlToken,
-                        data: {
-                            event: parsed.event,
-                            data: {
-                                status: parsed.status,
-                                payload: parsed.payload
-                            }
-                        }
-                    }));
-                }
-            } catch (e) {
-                // Not JSON, log it
-                console.log(`[Python Script] ${line}`);
-            }
-        });
-    });
-
-    pyProcess.stderr.on('data', (data) => {
-        console.error(`[Python Error] ${data.toString()}`);
-    });
-
-    pyProcess.on('close', (code) => {
-        console.log(`Python script exited with code ${code}`);
-        processSpawned = false;
-    });
-}
+process.on('SIGINT', () => { cleanup(); process.exit(0); });
+process.on('SIGTERM', () => { cleanup(); process.exit(0); });
 
 function connectAndStart() {
     if (started) return;
     if (!nlPort || !nlToken || !nlConnectToken) {
-        return; // Need all parameters to connect safely
+        return;
     }
     started = true;
-    
-    // Stop listening to stdin to let process execute cleanly
     process.stdin.pause();
 
     const wsUrl = `ws://127.0.0.1:${nlPort}?extensionId=${nlExtensionId}&connectToken=${nlConnectToken}`;
     console.log(`Connecting to Neutralino WebSocket at: ${wsUrl}`);
-    
     const ws = new WebSocket(wsUrl);
 
     ws.on('open', () => {
         console.log('Connected to Neutralino WebSocket server successfully.');
-        
-        // Notify application frontend that the extension is ready
-        ws.send(JSON.stringify({
-            id: 'auth',
-            method: 'app.broadcast',
-            accessToken: nlToken,
-            data: {
-                event: 'extensionReady',
-                data: 'installer_wrapper'
-            }
-        }));
+        broadcastToApp(ws, 'extensionReady', 'installer_wrapper');
 
-        // Start the background discovery instance immediately
-        startBackgroundInstance(ws);
+        // Start backend engine
+        startBackendProcess(ws);
     });
 
     ws.on('message', (message) => {
         try {
             const parsed = JSON.parse(message.toString());
-            console.log('Received WebSocket message:', parsed);
-            if (parsed.event === 'appReady') {
-                console.log('Received appReady event from frontend. Initiating Python process.');
-                if (!processSpawned) {
-                    processSpawned = true;
-                    startExtensionProcess(ws);
-                }
-                
-                // Re-broadcast instance port if background service is already running
-                if (instancePort) {
-                    console.log(`Re-broadcasting INSTANCE_STARTED port: ${instancePort}`);
-                    ws.send(JSON.stringify({
-                        id: Date.now().toString(),
-                        method: 'app.broadcast',
-                        accessToken: nlToken,
-                        data: {
-                            event: 'INSTANCE_STARTED',
-                            data: {
-                                event: 'INSTANCE_STARTED',
-                                port: instancePort
-                            }
-                        }
-                    }));
-                }
-            } else if (parsed.event === 'forceRetry') {
-                console.log('Received forceRetry event from frontend. Resetting and initiating Python process.');
-                
-                const platformDir = process.platform === 'win32' ? 'windows' : 'linux';
-                const mutagenDir = path.join(__dirname, '..', 'backend', 'bin', platformDir, 'mutagen');
-                const deskflowDir = path.join(__dirname, '..', 'backend', 'bin', platformDir, 'deskflow');
 
+            // Ignore internal RPC acknowledgements from Neutralino server
+            if (parsed.id && parsed.data?.success !== undefined) {
+                return;
+            }
+
+            console.log('Received WebSocket message:', parsed);
+
+            const eventData = (parsed.data && typeof parsed.data === 'object' && !Array.isArray(parsed.data)) ? parsed.data : {};
+            const eventName = parsed.event || eventData.event;
+            const cmd = parsed.command || parsed.action || eventData.command || eventData.action || eventName;
+
+            if (eventName === 'appReady' || cmd === 'appReady') {
+                console.log('Received appReady event from frontend.');
+                if (!backendProcess) {
+                    startBackendProcess(ws);
+                }
+                if (lastEnvData) {
+                    broadcastToApp(ws, 'ENV_INFO', lastEnvData);
+                }
+                if (lastBinaryStatus) {
+                    broadcastToApp(ws, 'BINARY_STATUS', lastBinaryStatus);
+                }
+                if (lastInstallerStatus) {
+                    broadcastToApp(ws, 'INSTALLER_STATUS', lastInstallerStatus);
+                }
+                if (lastBinaryStatus && lastBinaryStatus.all_ready) {
+                    broadcastToApp(ws, 'INSTALLER_READY', {});
+                }
+                if (lastInstancePort) {
+                    broadcastToApp(ws, 'INSTANCE_STARTED', { event: 'INSTANCE_STARTED', port: lastInstancePort });
+                }
+                return;
+            }
+
+            if (eventName === 'forceRetry' || cmd === 'forceRetry') {
+                console.log('Received forceRetry event from frontend. Resetting binaries...');
+                lastBinaryStatus = {
+                    mutagen: 'missing',
+                    deskflow: 'missing',
+                    cloudflared: 'missing',
+                    all_ready: false
+                };
+                lastInstallerStatus = {
+                    status: 'MISSING',
+                    payload: 'Core binaries wiped. Ready to install.'
+                };
+
+                const platformDir = process.platform === 'win32' ? 'windows' : 'linux';
+                const binDir = path.join(__dirname, '..', 'backend', 'bin', platformDir);
                 try {
-                    if (fs.existsSync(mutagenDir)) {
-                        fs.rmSync(mutagenDir, { recursive: true, force: true });
-                        console.log(`Cleaned directory: ${mutagenDir}`);
-                    }
-                    if (fs.existsSync(deskflowDir)) {
-                        fs.rmSync(deskflowDir, { recursive: true, force: true });
-                        console.log(`Cleaned directory: ${deskflowDir}`);
-                    }
+                    const mutagenDir = path.join(binDir, 'mutagen');
+                    const deskflowDir = path.join(binDir, 'deskflow');
+                    const cloudflaredDir = path.join(binDir, 'cloudflared');
+                    if (fs.existsSync(mutagenDir)) fs.rmSync(mutagenDir, { recursive: true, force: true });
+                    if (fs.existsSync(deskflowDir)) fs.rmSync(deskflowDir, { recursive: true, force: true });
+                    if (fs.existsSync(cloudflaredDir)) fs.rmSync(cloudflaredDir, { recursive: true, force: true });
                 } catch (err) {
                     console.error('Failed to clean binary directories:', err);
                 }
 
-                if (!processSpawned) {
-                    processSpawned = true;
-                    startExtensionProcess(ws);
-                }
+                // Immediately inform frontend of missing state
+                broadcastToApp(ws, 'BINARY_STATUS', lastBinaryStatus);
+                broadcastToApp(ws, 'INSTALLER_STATUS', lastInstallerStatus);
 
-                // Re-broadcast instance port if background service is already running
-                if (instancePort) {
-                    console.log(`Re-broadcasting INSTANCE_STARTED port: ${instancePort}`);
-                    ws.send(JSON.stringify({
-                        id: Date.now().toString(),
-                        method: 'app.broadcast',
-                        accessToken: nlToken,
-                        data: {
-                            event: 'INSTANCE_STARTED',
-                            data: {
-                                event: 'INSTANCE_STARTED',
-                                port: instancePort
-                            }
-                        }
-                    }));
+                if (backendProcess) {
+                    backendProcess.stdin.write(JSON.stringify({ command: 'CHECK_BINARIES' }) + '\n');
                 }
-            } else if (parsed.event === 'cancelInstall') {
-                console.log('Received cancelInstall event from frontend. Cleaning up binaries and exiting.');
-                const platformDir = process.platform === 'win32' ? 'windows' : 'linux';
-                const mutagenDir = path.join(__dirname, '..', 'backend', 'bin', platformDir, 'mutagen');
-                const deskflowDir = path.join(__dirname, '..', 'backend', 'bin', platformDir, 'deskflow');
-
-                try {
-                    if (fs.existsSync(mutagenDir)) fs.rmSync(mutagenDir, { recursive: true, force: true });
-                    if (fs.existsSync(deskflowDir)) fs.rmSync(deskflowDir, { recursive: true, force: true });
-                } catch (err) {
-                    console.error('Failed to clean binary directories on cancel:', err);
-                }
+                return;
             }
-            
-            // If the message contains a command for KVM or sync automation, pipe it to instance.py stdin
-            if (parsed.command && instanceProcess) {
-                console.log(`Forwarding command ${parsed.command} to Python Instance stdin.`);
-                instanceProcess.stdin.write(JSON.stringify(parsed) + '\n');
+
+            if (eventName === 'cancelInstall' || cmd === 'cancelInstall') {
+                console.log('Received cancelInstall event from frontend.');
+                cleanup();
+                return;
+            }
+
+            // Forward IPC commands directly to main.py stdin with flattened command
+            if (cmd && backendProcess) {
+                console.log(`Forwarding command ${cmd} to StaLink Engine stdin.`);
+                const flatPayload = {
+                    command: cmd,
+                    ...eventData
+                };
+                backendProcess.stdin.write(JSON.stringify(flatPayload) + '\n');
             }
         } catch (e) {
             console.error('Failed to parse WebSocket message:', e);
@@ -290,11 +246,10 @@ process.stdin.on('data', (chunk) => {
             connectAndStart();
         }
     } catch (e) {
-        // Incomplete JSON or other stdin payload, wait for more data or fallback
+        // incomplete JSON, wait
     }
 });
 
-// Try reading auth info from .tmp/auth_info.json as a fallback
 function readAuthInfoFile() {
     const authInfoPath = path.join(__dirname, '..', '..', '.tmp', 'auth_info.json');
     if (fs.existsSync(authInfoPath)) {
@@ -309,23 +264,21 @@ function readAuthInfoFile() {
                 };
             }
         } catch (e) {
-            // Log parse or read error quietly
+            // ignore
         }
     }
     return null;
 }
 
 let retries = 0;
-const maxRetries = 50; // Try for up to 5 seconds
+const maxRetries = 50;
 
 function checkConfigAndConnect() {
     if (started) return;
-    
     if (nlPort && nlToken && nlConnectToken) {
         connectAndStart();
         return;
     }
-    
     const fileInfo = readAuthInfoFile();
     if (fileInfo && fileInfo.port && fileInfo.token && fileInfo.connectToken) {
         nlPort = fileInfo.port;
@@ -334,16 +287,13 @@ function checkConfigAndConnect() {
         connectAndStart();
         return;
     }
-    
     retries++;
     if (retries < maxRetries) {
         setTimeout(checkConfigAndConnect, 100);
     } else {
-        console.error("Failed to obtain port, token, and connectToken from args, env, stdin, or auth_info.json.");
+        console.error("Failed to obtain port, token, and connectToken.");
         process.exit(1);
     }
 }
 
-// Start handshake resolution check loop
 checkConfigAndConnect();
-

@@ -4,6 +4,7 @@ import NetworkPeersCard from './NetworkPeersCard.jsx';
 
 export default function Dashboard({
   localNode,
+  env,
   peers,
   linkedPeer,
   isScanning,
@@ -138,7 +139,7 @@ export default function Dashboard({
 
           {/* Local Instance and Peer Linking Section */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-4">
-            <LocalNodeCard localNode={localNode} />
+            <LocalNodeCard localNode={localNode} env={env} />
             <NetworkPeersCard
               peers={peers}
               linkedPeer={linkedPeer}

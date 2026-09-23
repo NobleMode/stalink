@@ -12,16 +12,16 @@
 | Phase | Description | Status | Progress |
 | :--- | :--- | :---: | :---: |
 | **Phase 1** | Environment & Project Scaffolding | `[x]` | **100%** |
-| **Phase 2** | Binary Auto-Installer & Unpacker | `[-]` | ~75% |
-| **Phase 3** | IPC Bridge & Process Management | `[-]` | ~50% |
+| **Phase 2** | Binary Auto-Installer & Unpacker | `[x]` | **100%** |
+| **Phase 3** | IPC Bridge & Process Management | `[x]` | **100%** |
 | **Phase 4** | Remote App Launcher / RPC | `[-]` | ~30% |
 | **Phase 5** | Local Multi-Device Hub & WAN File Transfer | `[-]` | ~20% |
-| **Phase 6** | React Frontend Implementation | `[-]` | ~50% |
-| **Phase 7** | Local Development Verification | `[-]` | ~25% |
-| **Phase 8** | Production Build & Distribution | `[ ]` | 0% |
+| **Phase 6** | React Frontend Implementation | `[-]` | ~60% |
+| **Phase 7** | Local Development Verification | `[-]` | ~50% |
+| **Phase 8** | Production Build & Distribution | `[-]` | ~30% |
 
 > **Key Architectural Transition Note:**
-> Phase 1 has been completed. The project has been fully migrated to Vite + React (`src/`), with Tailwind CSS, `index.html`, `vite.config.js`, `apps.json`, and `neutralino.config.json` configured. The UI has been completely rewritten in React components (`InstallerSplash.jsx`, `Dashboard.jsx`, `LocalNodeCard.jsx`, `NetworkPeersCard.jsx`) preserving 100% of the sci-fi aesthetic and existing functionality.
+> Phases 1, 2, and 3 are complete. The project has been fully migrated to Vite + React (`src/`), and the backend is consolidated into `extensions/backend/main.py` with `extensions/backend/env_detector.py`. Binary auto-installation (Mutagen, Deskflow, Cloudflared) with architecture detection, standard input/output IPC, process lifecycle management with `atexit` zero-zombie cleanup, KVM/Sync automation, and the `STOP_ALL` master kill switch are fully operational.
 
 ---
 
@@ -56,6 +56,7 @@
   └── extensions/
       └── backend/                    # Python native backend
           ├── main.py
+          ├── env_detector.py
           └── bin/                    # Auto-downloaded binaries target folder
               ├── windows/
               └── linux/
@@ -69,52 +70,65 @@
 
 ## Phase 2: Binary Auto-Installer & Unpacker (`main.py`)
 
-* [-] **Implement `ensure_binaries_exist()` inside `extensions/backend/main.py` using Python standard libraries (`urllib.request`, `zipfile`, `tarfile`):**
-  - **Current Status:** Implemented inside `extensions/utils/requirement_check.py` instead of `extensions/backend/main.py`.
-* [-] **Check presence of `mutagen`, `deskflow-core`, and `cloudflared` inside `extensions/backend/bin/<platform>/`:**
-  - **Current Status:** Checks `mutagen` and `deskflow` (or `deskflow-core`). `cloudflared` is **not checked or included** in `requirement_check.py`.
+* [x] **Implement `env_detector.py` utility for system and architecture profiling:**
+  - **Current Status:** Completed. Detects CPU model, logical cores, normalized architecture (`amd64` vs `arm64`), OS distro details (from `/etc/os-release`), kernel release, display server (`wayland` vs `x11`), desktop session, RAM (total/available), and emits `ENV_INFO` to the UI.
+
+* [x] **Implement `ensure_binaries_exist()` inside `extensions/backend/main.py` using Python standard libraries (`urllib.request`, `zipfile`, `tarfile`):**
+  - **Current Status:** Completed. Implemented in `extensions/backend/main.py`.
+
+* [x] **Check presence of `mutagen`, `deskflow-core`, and `cloudflared` inside `extensions/backend/bin/<platform>/`:**
+  - **Current Status:** Completed. Verified for all three binaries with cross-platform and CPU architecture detection.
+
 * [x] **If any binary is missing, emit `{"event": "INSTALLER_STATUS", "payload": "..."}` over `sys.stdout`:**
-  - **Current Status:** Implemented in `requirement_check.py` (emits status updates `MISSING`, `INSTALLING`, `COMPLETE`, `ERROR`).
+  - **Current Status:** Completed. Emits `MISSING`, `INSTALLING`, `COMPLETE`, `ERROR`.
+
 * [x] **Fetch archive streams directly from defined release URLs:**
-  - **Current Status:** Implemented in `requirement_check.py` via `urllib.request` with GitHub API latest release queries and fallback release URLs.
+  - **Current Status:** Completed via `urllib.request` with architecture-aware URLs and fallback direct release endpoints.
+
 * [x] **Extract `.zip` archives via `zipfile.ZipFile.extractall()`:**
-  - **Current Status:** Implemented in `requirement_check.py` (`extract_all_to_bin`).
+  - **Current Status:** Completed in `main.py` (`extract_archive`).
+
 * [x] **Extract `.tar.gz` archives via `tarfile.open("r:gz").extractall()`:**
-  - **Current Status:** Implemented in `requirement_check.py` (`extract_all_to_bin`). Also includes support for `.deb` extraction for Linux.
+  - **Current Status:** Completed in `main.py` (`extract_archive`) with embedded Debian `.deb` AR archive parser.
+
 * [x] **Delete temporary archive files immediately after decompression:**
-  - **Current Status:** Implemented in `requirement_check.py` (`download_and_extract` deletes `temp_download` directory).
+  - **Current Status:** Completed in `main.py`.
+
 * [x] **If running on Linux (`sys.platform == "linux"`), grant execution permissions:**
   ```python
   os.chmod(binary_path, 0o755)
   ```
-  - **Current Status:** Implemented in `requirement_check.py` (lines 377-380) for `mutagen` and `deskflow`.
-* [-] **Dispatch `{"event": "INSTALLER_READY"}` when all binaries are verified:**
-  - **Current Status:** Emits `{"event": "INSTALLER_STATUS", "status": "COMPLETE", "payload": "..."}` instead of `{"event": "INSTALLER_READY"}`.
+  - **Current Status:** Completed in `main.py` for Mutagen, Deskflow, and Cloudflared.
+
+* [x] **Dispatch `{"event": "INSTALLER_READY"}` when all binaries are verified:**
+  - **Current Status:** Completed. Emits `INSTALLER_READY` to trigger smooth UI transition.
 
 ---
 
 ## Phase 3: IPC Bridge & Process Management (`main.py`)
 
-* [-] **Set up continuous standard input read loop (`for line in sys.stdin`) to receive JSON events from Neutralino:**
-  - **Current Status:** Implemented in `extensions/backend/python_utils/instance.py` via `run_stdin_reader()`. However, it receives piped events from `installer_wrapper/extension.js` rather than being directly attached as the Neutralino native extension.
-* [-] **Add process lifecycle handlers:**
-  - `kvm_proc`: Tracked as `KVM_PROCESS` in `instance.py`.
-  - `sync_proc`: Tracked as `SYNC_PROCESSES` dictionary in `instance.py`.
-  - `web_server_proc`: Not tracked as subprocess (runs as Python thread).
-  - `tunnel_proc`: Not implemented.
-  - `subprocess.CREATE_NO_WINDOW`: Implemented for Windows in `instance.py`.
-  - `atexit.register(cleanup_all_processes)`: Not implemented (manual `cleanup_all()` invoked on stdin EOF, but no `atexit` registration).
-* [-] **Implement `START_KVM` and `STOP_KVM`:**
-  - **Server Mode:** Runs `deskflow server [--config <path>] [--address <ip>]` (checklist specifies `deskflow-core --server --address 0.0.0.0:24800`).
-  - **Client Mode:** Runs `deskflow client <target_ip>`.
-  - **Stop Mode:** Terminates/kills `KVM_PROCESS`.
-  - **Status:** Mostly implemented in `instance.py`, minor differences in arguments/binary names.
-* [-] **Implement `START_SYNC` and `STOP_SYNC`:**
-  - Runs `mutagen sync create --name <name> <alpha> <beta>`.
-  - Terminates via `mutagen sync terminate <name>`.
-  - **What's Missing:** Default ignore rules (`.idea/`, `.vs/`, `.godot/`, `Library/`, `node_modules/`, `bin/`, `obj/`) and default SSH destination formatting (`user@<target_ip>:<remote_path> --name=stalink-session`).
-* [-] **Implement `STOP_ALL` master kill switch:**
-  - **Current Status:** Internal cleanup function `cleanup_all()` exists in `instance.py`, but there is no IPC command handler for `STOP_ALL`.
+* [x] **Set up continuous standard input read loop (`for line in sys.stdin`) to receive JSON events from Neutralino:**
+  - **Current Status:** Completed. Implemented in `extensions/backend/main.py` in a background daemon thread, with commands forwarded cleanly via `extension.js`.
+
+* [x] **Add process lifecycle handlers:**
+  - `kvm_proc`: Tracked as `KVM_PROCESS`.
+  - `sync_proc`: Tracked as `SYNC_PROCESSES` dictionary.
+  - `tunnel_proc`: Tracked as `TUNNEL_PROC`.
+  - `subprocess.CREATE_NO_WINDOW`: Set for Windows (`sys.platform == "win32"`).
+  - `atexit.register(cleanup_all_processes)` and `SIGINT`/`SIGTERM` handlers registered for zero zombie processes.
+
+* [x] **Implement `START_KVM` and `STOP_KVM`:**
+  - **Server Mode:** Executes `deskflow-core --server --address 0.0.0.0:24800` (or `deskflow server`).
+  - **Client Mode:** Executes `deskflow-core client <target_ip>`.
+  - **Stop Mode:** Terminates `KVM_PROCESS`.
+
+* [x] **Implement `START_SYNC` and `STOP_SYNC`:**
+  - Executes `mutagen sync create <local_path> user@<target_ip>:<remote_path> --name=stalink-session`.
+  - Default ignore rules applied: `.idea/`, `.vs/`, `.godot/`, `Library/`, `node_modules/`, `bin/`, `obj/`, `.git/`.
+  - Stop Mode terminates process and calls `mutagen sync terminate stalink-session`.
+
+* [x] **Implement `STOP_ALL` master kill switch:**
+  - **Current Status:** Completed. Stops KVM, all sync sessions, tunnel, and emits `ALL_STOPPED`.
 
 ---
 

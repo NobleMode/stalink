@@ -75,7 +75,6 @@
     "binaryVersion": "6.8.0",
     "clientVersion": "6.8.0",
     "frontendLibrary": {
-      "patchFile": "/index.html",
       "projectPath": "/",
       "devUrl": "http://localhost:5173",
       "devCommand": "npm run dev",
